@@ -1,0 +1,21 @@
+# Datasets — large, downloadable, not source
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Trained weights / checkpoints
+*.npz
+*.npy
+*.pkl
+checkpoints/
+
+# Generated animation output
+viz/out/
+
+# macOS
+.DS_Store

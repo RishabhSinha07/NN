@@ -1,5 +1,6 @@
 # Datasets — large, downloadable, not source
-data/
+data/*
+!data/README.md
 
 # Python
 __pycache__/

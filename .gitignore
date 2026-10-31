@@ -15,8 +15,7 @@ venv/
 *.pkl
 checkpoints/
 
-# Generated animation output
-viz/out/
+# Generated plots and videos ARE tracked -- see viz/out/
 
 # macOS
 .DS_Store

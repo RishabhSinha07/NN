@@ -1,15 +1,15 @@
-"""Step 2 -- drag the weights, watch the boundary move.
+"""Steps 2-3 -- drag the parameters, watch the boundary move.
 
     .venv/bin/python viz/boundary_viewer.py
     .venv/bin/python viz/boundary_viewer.py --save    # static png instead
 
-Four sliders, one per weight in a Network([Layer(2, 2)]). The background is
-shaded by whichever class wins at that point, the solid line is where the two
-outputs are exactly equal, and the dashed line is the rule the data was
-actually generated from.
+Six sliders over a Network([Layer(2, 2)]): four weights and two biases. The
+background is shaded by whichever class wins, the solid line is where the two
+outputs are exactly equal, and the dashed line is the rule the data came from.
 
-The thing to notice: the solid line pivots about the origin and will not leave
-it, however you drag. No bias, no shifting. That is step 3's job.
+Step 2 (weights only, biases at 0): the solid line pivots about the origin and
+will not leave it. Step 3: the biases let it translate, and the linear dataset
+becomes solvable at 100%.
 """
 
 import argparse
@@ -36,36 +36,47 @@ from nn.network import Layer, Network  # noqa: E402
 
 import style  # noqa: E402
 
-GRID = 240          # background resolution
+# Layer.calculate_output takes one point at a time, so the background costs
+# GRID*GRID calls -- about 23 ms at 180, which still feels live when dragging.
+GRID = 180
 SLIDER_RANGE = 3.0
 N_POINTS = 200
 SEED = 1
 
-# A deliberately mediocre starting point -- better than chance, clearly wrong.
+# Weights give a visible diagonal through the origin; biases start at zero so
+# the viewer opens on exactly the step 2 ceiling.
 START_WEIGHTS = np.array([[0.9, -0.4], [-0.6, 1.1]])
+START_BIASES = np.array([0.0, 0.0])
+
+PARAMS = [
+    ("w[0,0]", "spot size → safe", "safe"),
+    ("w[0,1]", "spike length → safe", "safe"),
+    ("w[1,0]", "spot size → poisonous", "poisonous"),
+    ("w[1,1]", "spike length → poisonous", "poisonous"),
+    ("b[0]", "bias → safe", "safe"),
+    ("b[1]", "bias → poisonous", "poisonous"),
+]
 
 
-def grid_inputs(n=GRID):
-    """Points covering the unit square, shaped (2, n*n) -- the layout
-    Layer.calculate_output already accepts, so the whole background is one
-    matrix multiply rather than n*n separate calls."""
+def grid_axes(n=GRID):
     axis = np.linspace(0, 1, n)
     gx, gy = np.meshgrid(axis, axis)
-    return gx, gy, np.stack([gx.ravel(), gy.ravel()])
+    return gx, gy, np.stack([gx.ravel(), gy.ravel()], axis=1)
 
 
 class Viewer:
     def __init__(self, dark=False):
         self.p = style.use(dark)
         self.net = Network([Layer(2, 2)])
-        self.net.layers[0].weights = START_WEIGHTS.copy()
+        self.layer = self.net.layers[0]
         self.kind = "linear"
-        self.gx, self.gy, self.grid = grid_inputs()
+        self.gx, self.gy, self.grid = grid_axes()
 
-        self.fig = plt.figure(figsize=(10.2, 5.6))
-        self.ax = self.fig.add_axes([0.07, 0.12, 0.52, 0.76])
+        self.fig = plt.figure(figsize=(10.2, 5.8))
+        self.ax = self.fig.add_axes([0.07, 0.11, 0.52, 0.76])
         self._build_plot()
         self._build_widgets()
+        self.push_params()
         self.load_data("linear")
 
     # -- layout ----------------------------------------------------------
@@ -85,21 +96,12 @@ class Viewer:
         self.boundary = None
         self.truth = None
         self.scatters = {}
-        for name in CLASS_NAMES:
+        for label, name in enumerate(CLASS_NAMES):
             self.scatters[name] = self.ax.scatter(
                 [], [], s=52 if name == "poisonous" else 42,
                 marker=style.MARKERS[name], facecolor=p[name],
                 edgecolor=p["surface"], linewidth=1.0, zorder=4,
             )
-        # the pivot the boundary can never escape without a bias
-        self.ax.plot([0], [0], marker="o", markersize=5, color=p["truth"], zorder=5)
-        self.ax.annotate(
-            "pinned here", xy=(0.004, 0.004), xytext=(0.10, 0.11),
-            color=p["muted"], fontsize=8.5, zorder=6,
-            arrowprops=dict(arrowstyle="-", color=p["muted"], linewidth=0.9),
-            bbox=dict(facecolor=p["surface"], edgecolor="none",
-                      alpha=0.85, pad=2.0),
-        )
         self.readout = self.ax.set_title("", loc="left", fontsize=10)
 
         handles = [
@@ -124,28 +126,23 @@ class Viewer:
 
     def _build_widgets(self):
         p = self.p
+        start = np.concatenate([START_WEIGHTS.ravel(), START_BIASES])
         self.sliders = []
-        labels = [
-            ("w[0,0]", "spot size", "safe"),
-            ("w[0,1]", "spike length", "safe"),
-            ("w[1,0]", "spot size", "poisonous"),
-            ("w[1,1]", "spike length", "poisonous"),
-        ]
-        for i, (name, src, dst) in enumerate(labels):
-            ax = self._widget_ax([0.70, 0.74 - i * 0.085, 0.26, 0.035])
-            s = Slider(ax, "", -SLIDER_RANGE, SLIDER_RANGE,
-                       valinit=START_WEIGHTS.ravel()[i], valstep=0.01,
-                       color=p[dst], track_color=p["grid"])
+        for i, (name, desc, dst) in enumerate(PARAMS):
+            y = 0.82 - i * 0.078 - (0.02 if i >= 4 else 0.0)  # gap before biases
+            ax = self._widget_ax([0.70, y, 0.26, 0.032])
+            s = Slider(ax, "", -SLIDER_RANGE, SLIDER_RANGE, valinit=start[i],
+                       valstep=0.01, color=p[dst], track_color=p["grid"])
             s.valtext.set_color(p["muted"])
             s.valtext.set_fontsize(9)
-            ax.set_title(f"{name}   {src} → {dst}", loc="left",
-                         fontsize=8.5, color=p["muted"], pad=4)
+            ax.set_title(f"{name}   {desc}", loc="left", fontsize=8.5,
+                         color=p["muted"], pad=3)
             s.on_changed(self.on_slider)
             self.sliders.append(s)
 
-        radio_ax = self._widget_ax([0.70, 0.26, 0.26, 0.13])
+        radio_ax = self._widget_ax([0.70, 0.19, 0.26, 0.12])
         radio_ax.set_title("dataset", loc="left", fontsize=8.5,
-                           color=p["muted"], pad=4)
+                           color=p["muted"], pad=3)
         for side in radio_ax.spines.values():
             side.set_visible(False)
         self.radio = RadioButtons(radio_ax, ("linear", "blob"),
@@ -155,14 +152,19 @@ class Viewer:
             lbl.set_color(p["text"])
         self.radio.on_clicked(self.load_data)
 
-        reset_ax = self._widget_ax([0.70, 0.14, 0.12, 0.05])
+        reset_ax = self._widget_ax([0.70, 0.08, 0.12, 0.048])
         self.reset = Button(reset_ax, "reset", color=p["grid"],
                             hovercolor=p["muted"])
         self.reset.label.set_color(p["text"])
         self.reset.label.set_fontsize(9)
-        self.reset.on_clicked(self.on_reset)
+        self.reset.on_clicked(lambda _: [s.reset() for s in self.sliders])
 
     # -- behaviour -------------------------------------------------------
+    def push_params(self):
+        vals = np.array([s.val for s in self.sliders])
+        self.layer.weights = vals[:4].reshape(2, 2)
+        self.layer.biases = vals[4:]
+
     def load_data(self, kind):
         self.kind = kind
         self.X, self.y = make_fruit_data(N_POINTS, kind, seed=SEED)
@@ -187,29 +189,22 @@ class Viewer:
             self.truth = [circle]
 
     def on_slider(self, _):
-        self.net.layers[0].weights = np.array(
-            [s.val for s in self.sliders]
-        ).reshape(2, 2)
+        self.push_params()
         self.refresh()
 
-    def on_reset(self, _):
-        for s in self.sliders:
-            s.reset()
-
     def refresh(self):
-        # One forward pass for the whole background grid.
-        out = self.net.calculate_output(self.grid)       # (2, GRID*GRID)
-        margin = out[0] - out[1]                         # >0 means safe wins
-        self.shading.set_data((margin < 0).reshape(GRID, GRID).astype(float))
+        out = np.array([self.net.calculate_output(pt) for pt in self.grid])
+        margin = (out[:, 0] - out[:, 1]).reshape(GRID, GRID)
+        self.shading.set_data((margin < 0).astype(float))
 
         if self.boundary is not None:
             self.boundary.remove()
         self.boundary = self.ax.contour(
-            self.gx, self.gy, margin.reshape(GRID, GRID), levels=[0],
+            self.gx, self.gy, margin, levels=[0],
             colors=[self.p["text"]], linewidths=2, zorder=3,
         )
 
-        predicted = np.argmax(self.net.calculate_output(self.X.T), axis=0)
+        predicted = np.array([self.net.classify(x) for x in self.X])
         acc = float(np.mean(predicted == self.y))
         self.readout.set_text(
             f"accuracy {acc:6.1%}      always-guess-majority {self.baseline:.0%}"

@@ -1,4 +1,3 @@
-# We will create layer class for our neural network
 import numpy as np
 
 class Layer:
@@ -6,9 +5,10 @@ class Layer:
         self.input_size = input_size
         self.output_size = output_size
         self.weights = np.random.default_rng().random((output_size, input_size))
+        self.biases = np.random.default_rng().random((output_size,))
 
     def calculate_output(self, inputs : np.ndarray) -> np.ndarray:
-        return np.dot(self.weights, inputs)
+        return np.dot(self.weights, inputs) + self.biases
 
 
 class Network:

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 from matplotlib.lines import Line2D
 from matplotlib.widgets import Button, RadioButtons, Slider
 
@@ -241,29 +241,41 @@ def main():
     ap.add_argument("--learn-rate", type=float, default=10.0)
     ap.add_argument("--steps", type=int, default=200,
                     help="steps to run for --save / --gif")
-    ap.add_argument("--save", action="store_true")
+    ap.add_argument("--video", action="store_true",
+                    help="write an mp4 (smaller and smoother than --gif)")
     ap.add_argument("--gif", action="store_true")
+    ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--save", action="store_true")
     ap.add_argument("--dark", action="store_true")
     args = ap.parse_args()
 
-    if args.save or args.gif:
+    if args.save or args.gif or args.video:
         plt.switch_backend("Agg")
     t = Trainer(args.shape, args.dataset, args.learn_rate, dark=args.dark)
     name = "training-" + "-".join(str(n) for n in args.shape) + f"-{args.dataset}"
 
-    if args.gif:
-        every = max(1, args.steps // 120)      # ~120 frames whatever the length
-        def frame(i):
+    if args.video or args.gif:
+        # a gif at 240 frames is enormous, so it gets thinned; mp4 does not
+        every = 1 if args.video else max(1, args.steps // 120)
+
+        def frame(_i):
             for _ in range(every):
                 t.net.learn(t.X, t.Y, learning_rate=args.learn_rate)
             t.record()
             t.draw()
             return ()
+
         anim = FuncAnimation(t.fig, frame, frames=args.steps // every,
-                             interval=50, blit=False)
+                             interval=1000 // args.fps, blit=False)
         style.OUT_DIR.mkdir(parents=True, exist_ok=True)
-        path = style.OUT_DIR / f"{name}.gif"
-        anim.save(path, writer=PillowWriter(fps=20))
+        if args.video:
+            path = style.OUT_DIR / f"{name}.mp4"
+            writer = FFMpegWriter(fps=args.fps, bitrate=2400,
+                                  extra_args=["-pix_fmt", "yuv420p"])
+        else:
+            path = style.OUT_DIR / f"{name}.gif"
+            writer = PillowWriter(fps=20)
+        anim.save(path, writer=writer)
         print(path)
     elif args.save:
         for _ in range(args.steps):

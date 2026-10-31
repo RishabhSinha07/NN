@@ -46,7 +46,12 @@ SLIDER_RANGE = 6.0
 N_POINTS = 200
 DATA_SEED = 1
 INIT_SEED = 7
-INIT_SCALE = 2.5
+# Weights are scaled by 1/sqrt(fan_in). A node's weighted input is a sum of
+# fan_in terms, so its spread grows like sqrt(fan_in) -- a fixed scale that
+# suits 2 inputs drives a 16-input layer deep into the sigmoid's flat tails,
+# where sigma' is ~1e-6 and nothing can learn. Dividing it out keeps every
+# layer in the responsive range whatever its width.
+INIT_GAIN = 3.0
 MAX_SLIDERS = 28     # past this, hand-tuning is the thing step 6 replaces
 
 
@@ -72,8 +77,9 @@ def build_network(shape, seed=INIT_SEED):
     rng = np.random.default_rng(seed)
     layers = [Layer(a, b) for a, b in zip(shape, shape[1:])]
     for layer in layers:
-        layer.weights = rng.normal(0, INIT_SCALE, layer.weights.shape).round(2)
-        layer.biases = rng.normal(0, 0.5, layer.biases.shape).round(2)
+        scale = INIT_GAIN / np.sqrt(layer.input_size)
+        layer.weights = rng.normal(0, scale, layer.weights.shape).round(3)
+        layer.biases = np.zeros_like(layer.biases)
     net = Network(layers)
     _centre_boundary(net)
     return net
@@ -333,7 +339,7 @@ class Viewer:
         if self.sliders:
             rng = np.random.default_rng()
             for s in self.sliders:
-                s.set_val(round(float(rng.normal(0, INIT_SCALE)), 2))
+                s.set_val(round(float(rng.normal(0, INIT_GAIN / np.sqrt(2))), 2))
         else:
             self.net = build_network(self.shape, seed=None)
             self.refresh()

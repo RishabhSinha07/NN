@@ -6,9 +6,13 @@ class Layer:
         self.output_size = output_size
         self.weights = np.random.default_rng().random((output_size, input_size))
         self.biases = np.random.default_rng().random((output_size,)) # Adding bias help us move the axis away from the origin.
+        self.activation = lambda x: 1 / (1 + np.exp(-x))
 
     def calculate_output(self, inputs : np.ndarray) -> np.ndarray:
-        return np.dot(self.weights, inputs) + self.biases
+        output = np.dot(self.weights, inputs) + self.biases
+        if self.activation is not None:
+            output = self.activation(output)
+        return output
 
 
 class Network:
@@ -19,6 +23,7 @@ class Network:
         output = inputs
         for layer in self.layers:
             output = layer.calculate_output(output)
+
         return output
     
     def classify(self, inputs: np.ndarray) -> int:

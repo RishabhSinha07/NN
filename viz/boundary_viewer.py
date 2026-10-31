@@ -1,15 +1,19 @@
-"""Steps 2-3 -- drag the parameters, watch the boundary move.
+"""Steps 2-5 -- drag every parameter, watch the boundary move.
 
     .venv/bin/python viz/boundary_viewer.py
-    .venv/bin/python viz/boundary_viewer.py --save    # static png instead
+    .venv/bin/python viz/boundary_viewer.py --shape 2 3 2
+    .venv/bin/python viz/boundary_viewer.py --save
 
-Six sliders over a Network([Layer(2, 2)]): four weights and two biases. The
-background is shaded by whichever class wins, the solid line is where the two
-outputs are exactly equal, and the dashed line is the rule the data came from.
+Sliders are generated from the network's actual shape, one per weight and
+bias, so any layer sizes work. --shape takes node counts including the input
+layer: "2 2" is a single layer, "2 3 2" has one hidden layer of 3 nodes.
 
-Step 2 (weights only, biases at 0): the solid line pivots about the origin and
-will not leave it. Step 3: the biases let it translate, and the linear dataset
-becomes solvable at 100%.
+Background is shaded by whichever class wins, the solid line is where the two
+outputs are exactly equal, the dashed line is the rule the data came from.
+
+While no activation function exists, the readout prints the single linear
+equation the whole network collapses to -- however many layers you stack.
+That is step 4's lesson, in the one place it cannot be argued with.
 """
 
 import argparse
@@ -36,26 +40,49 @@ from nn.network import Layer, Network  # noqa: E402
 
 import style  # noqa: E402
 
-# Layer.calculate_output takes one point at a time, so the background costs
-# GRID*GRID calls -- about 23 ms at 180, which still feels live when dragging.
-GRID = 180
+GRID = 150          # background resolution; costs GRID*GRID forward passes
 SLIDER_RANGE = 3.0
 N_POINTS = 200
-SEED = 1
+DATA_SEED = 1
+INIT_SEED = 7
 
-# Weights give a visible diagonal through the origin; biases start at zero so
-# the viewer opens on exactly the step 2 ceiling.
-START_WEIGHTS = np.array([[0.9, -0.4], [-0.6, 1.1]])
-START_BIASES = np.array([0.0, 0.0])
 
-PARAMS = [
-    ("w[0,0]", "spot size → safe", "safe"),
-    ("w[0,1]", "spike length → safe", "safe"),
-    ("w[1,0]", "spot size → poisonous", "poisonous"),
-    ("w[1,1]", "spike length → poisonous", "poisonous"),
-    ("b[0]", "bias → safe", "safe"),
-    ("b[1]", "bias → poisonous", "poisonous"),
-]
+def build_network(shape):
+    """Network from node counts, e.g. [2, 3, 2]. Weights are seeded here so
+    the viewer opens identically every time -- Layer's own init uses a fresh
+    unseeded generator."""
+    rng = np.random.default_rng(INIT_SEED)
+    layers = [Layer(a, b) for a, b in zip(shape, shape[1:])]
+    for layer in layers:
+        layer.weights = rng.normal(0, 0.9, layer.weights.shape).round(2)
+        layer.biases = rng.normal(0, 0.4, layer.biases.shape).round(2)
+    return Network(layers)
+
+
+def param_slots(net):
+    """(label, layer, kind, index) for every tunable number in the network."""
+    slots = []
+    for li, layer in enumerate(net.layers, start=1):
+        for j in range(layer.output_size):
+            for k in range(layer.input_size):
+                slots.append((f"W{li}[{j},{k}]", layer, "w", (j, k)))
+        for j in range(layer.output_size):
+            slots.append((f"b{li}[{j}]", layer, "b", (j,)))
+    return slots
+
+
+def collapsed_line(net):
+    """With no activation, any stack of layers is one affine map. Compose it
+    and return the (a, b, c) of the boundary a*spot + b*spike + c = 0.
+    Returns None once a layer gains an activation function."""
+    if any(getattr(layer, "activation", None) is not None for layer in net.layers):
+        return None
+    W = np.eye(net.layers[0].input_size)
+    b = np.zeros(net.layers[0].input_size)
+    for layer in net.layers:
+        W = layer.weights @ W
+        b = layer.weights @ b + layer.biases
+    return W[0, 0] - W[1, 0], W[0, 1] - W[1, 1], b[0] - b[1]
 
 
 def grid_axes(n=GRID):
@@ -65,17 +92,19 @@ def grid_axes(n=GRID):
 
 
 class Viewer:
-    def __init__(self, dark=False):
+    def __init__(self, shape, dark=False):
         self.p = style.use(dark)
-        self.net = Network([Layer(2, 2)])
-        self.layer = self.net.layers[0]
+        self.shape = shape
+        self.net = build_network(shape)
+        self.slots = param_slots(self.net)
         self.kind = "linear"
         self.gx, self.gy, self.grid = grid_axes()
 
-        self.fig = plt.figure(figsize=(10.2, 5.8))
-        self.ax = self.fig.add_axes([0.07, 0.11, 0.52, 0.76])
+        self.fig = plt.figure(figsize=(11.4, 6.8))
+        self.ax = self.fig.add_axes([0.05, 0.22, 0.44, 0.66])
         self._build_plot()
-        self._build_widgets()
+        self._build_sliders()
+        self._build_controls()
         self.push_params()
         self.load_data("linear")
 
@@ -96,13 +125,16 @@ class Viewer:
         self.boundary = None
         self.truth = None
         self.scatters = {}
-        for label, name in enumerate(CLASS_NAMES):
+        for name in CLASS_NAMES:
             self.scatters[name] = self.ax.scatter(
                 [], [], s=52 if name == "poisonous" else 42,
                 marker=style.MARKERS[name], facecolor=p[name],
                 edgecolor=p["surface"], linewidth=1.0, zorder=4,
             )
         self.readout = self.ax.set_title("", loc="left", fontsize=10)
+        self.collapse_text = self.fig.text(
+            0.05, 0.10, "", fontsize=9, color=p["muted"], family="monospace",
+        )
 
         handles = [
             Line2D([], [], linestyle="none", marker=style.MARKERS[n],
@@ -115,7 +147,7 @@ class Viewer:
                    linestyle=(0, (5, 4)), label="true boundary"),
         ]
         self.fig.legend(handles=handles, loc="upper left",
-                        bbox_to_anchor=(0.07, 0.99), ncol=4, columnspacing=1.4,
+                        bbox_to_anchor=(0.05, 0.99), ncol=4, columnspacing=1.4,
                         handletextpad=0.5, fontsize=9)
 
     def _widget_ax(self, rect):
@@ -124,25 +156,43 @@ class Viewer:
         ax.set_facecolor(self.p["surface"])
         return ax
 
-    def _build_widgets(self):
+    def _build_sliders(self):
+        """One slider per parameter, in a single column, grouped by layer.
+        Sliders are deliberately neutral-coloured -- blue and orange mean
+        'safe' and 'poisonous' in the plot and must not mean anything here."""
         p = self.p
-        start = np.concatenate([START_WEIGHTS.ravel(), START_BIASES])
+        n_rows = len(self.slots) + len(self.net.layers)   # params + headings
+        top, bottom = 0.94, 0.06
+        pitch = min(0.044, (top - bottom) / max(n_rows, 1))
+
         self.sliders = []
-        for i, (name, desc, dst) in enumerate(PARAMS):
-            y = 0.82 - i * 0.078 - (0.02 if i >= 4 else 0.0)  # gap before biases
-            ax = self._widget_ax([0.70, y, 0.26, 0.032])
-            s = Slider(ax, "", -SLIDER_RANGE, SLIDER_RANGE, valinit=start[i],
-                       valstep=0.01, color=p[dst], track_color=p["grid"])
+        y = top
+        current_layer = None
+        for label, layer, kind, idx in self.slots:
+            if layer is not current_layer:
+                current_layer = layer
+                li = self.net.layers.index(layer) + 1
+                self.fig.text(0.60, y - 0.012,
+                              f"layer {li}   {layer.input_size} → {layer.output_size}",
+                              fontsize=8.5, color=p["muted"])
+                y -= pitch
+            ax = self._widget_ax([0.70, y, 0.20, min(0.024, pitch * 0.55)])
+            value = (layer.weights[idx] if kind == "w" else layer.biases[idx])
+            s = Slider(ax, label, -SLIDER_RANGE, SLIDER_RANGE,
+                       valinit=float(value), valstep=0.01,
+                       color=p["muted"], track_color=p["grid"])
+            s.label.set_fontsize(8)
+            s.label.set_color(p["muted"])
+            s.label.set_family("monospace")
+            s.valtext.set_fontsize(8)
             s.valtext.set_color(p["muted"])
-            s.valtext.set_fontsize(9)
-            ax.set_title(f"{name}   {desc}", loc="left", fontsize=8.5,
-                         color=p["muted"], pad=3)
             s.on_changed(self.on_slider)
             self.sliders.append(s)
+            y -= pitch
 
-        radio_ax = self._widget_ax([0.70, 0.19, 0.26, 0.12])
-        radio_ax.set_title("dataset", loc="left", fontsize=8.5,
-                           color=p["muted"], pad=3)
+    def _build_controls(self):
+        p = self.p
+        radio_ax = self._widget_ax([0.05, 0.005, 0.12, 0.080])
         for side in radio_ax.spines.values():
             side.set_visible(False)
         self.radio = RadioButtons(radio_ax, ("linear", "blob"),
@@ -152,22 +202,35 @@ class Viewer:
             lbl.set_color(p["text"])
         self.radio.on_clicked(self.load_data)
 
-        reset_ax = self._widget_ax([0.70, 0.08, 0.12, 0.048])
-        self.reset = Button(reset_ax, "reset", color=p["grid"],
-                            hovercolor=p["muted"])
-        self.reset.label.set_color(p["text"])
-        self.reset.label.set_fontsize(9)
-        self.reset.on_clicked(lambda _: [s.reset() for s in self.sliders])
+        def button(rect, text, fn):
+            ax = self._widget_ax(rect)
+            b = Button(ax, text, color=p["grid"], hovercolor=p["muted"])
+            b.label.set_color(p["text"])
+            b.label.set_fontsize(9)
+            b.on_clicked(fn)
+            return b
+
+        self.reset_btn = button([0.20, 0.02, 0.10, 0.048], "reset",
+                                lambda _: [s.reset() for s in self.sliders])
+        self.rand_btn = button([0.32, 0.02, 0.12, 0.048], "randomize",
+                               self.on_randomize)
 
     # -- behaviour -------------------------------------------------------
     def push_params(self):
-        vals = np.array([s.val for s in self.sliders])
-        self.layer.weights = vals[:4].reshape(2, 2)
-        self.layer.biases = vals[4:]
+        for s, (_, layer, kind, idx) in zip(self.sliders, self.slots):
+            if kind == "w":
+                layer.weights[idx] = s.val
+            else:
+                layer.biases[idx] = s.val
+
+    def on_randomize(self, _):
+        rng = np.random.default_rng()
+        for s in self.sliders:
+            s.set_val(round(float(rng.normal(0, 0.9)), 2))
 
     def load_data(self, kind):
         self.kind = kind
-        self.X, self.y = make_fruit_data(N_POINTS, kind, seed=SEED)
+        self.X, self.y = make_fruit_data(N_POINTS, kind, seed=DATA_SEED)
         self.baseline = class_balance(self.y)["baseline"]
         for label, name in enumerate(CLASS_NAMES):
             self.scatters[name].set_offsets(self.X[self.y == label])
@@ -206,24 +269,35 @@ class Viewer:
 
         predicted = np.array([self.net.classify(x) for x in self.X])
         acc = float(np.mean(predicted == self.y))
+        shape = " → ".join(str(n) for n in self.shape)
         self.readout.set_text(
-            f"accuracy {acc:6.1%}      always-guess-majority {self.baseline:.0%}"
+            f"{shape}   {len(self.slots)} parameters        "
+            f"accuracy {acc:5.1%}     baseline {self.baseline:.0%}"
+        )
+
+        line = collapsed_line(self.net)
+        self.collapse_text.set_text(
+            "no activation → the whole network collapses to one line:\n"
+            f"   {line[0]:+.3f}·spot {line[1]:+.3f}·spike {line[2]:+.3f} = 0"
+            if line is not None else ""
         )
         self.fig.canvas.draw_idle()
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--save", action="store_true",
-                    help="write a png instead of opening a window")
+    ap.add_argument("--shape", type=int, nargs="+", default=[2, 2],
+                    help="node counts including the input layer, e.g. 2 3 2")
+    ap.add_argument("--save", action="store_true")
     ap.add_argument("--dark", action="store_true")
     args = ap.parse_args()
 
     if args.save:
         plt.switch_backend("Agg")
-    v = Viewer(dark=args.dark)
+    v = Viewer(args.shape, dark=args.dark)
     if args.save:
-        print(style.save(v.fig, "boundary-viewer", dark=args.dark))
+        name = "boundary-viewer-" + "-".join(str(n) for n in args.shape)
+        print(style.save(v.fig, name, dark=args.dark))
     else:
         plt.show()
 

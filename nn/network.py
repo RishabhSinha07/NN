@@ -5,7 +5,7 @@ class Layer:
         self.input_size = input_size
         self.output_size = output_size
         self.weights = np.random.default_rng().random((output_size, input_size))
-        self.biases = np.random.default_rng().random((output_size,))
+        self.biases = np.random.default_rng().random((output_size,)) # Adding bias help us move the axis away from the origin.
 
     def calculate_output(self, inputs : np.ndarray) -> np.ndarray:
         return np.dot(self.weights, inputs) + self.biases

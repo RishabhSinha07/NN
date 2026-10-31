@@ -85,6 +85,12 @@ def class_balance(y):
         "baseline": round(float(fractions.max()), 3),
     }
 
+def one_hot(y, num_classes=2):
+    """Convert integer labels to one-hot encoding."""
+    y = np.asarray(y, dtype=int)
+    one_hot = np.zeros((y.size, num_classes), dtype=float)
+    one_hot[np.arange(y.size), y] = 1.0
+    return one_hot
 
 if __name__ == "__main__":
     for kind in ("linear", "blob"):

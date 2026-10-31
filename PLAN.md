@@ -365,7 +365,7 @@ Pure drop-in: identical data shape, change only the loader. Free proof that noth
 - [x] 4 · Hidden layers
 - [x] 5 · Activation functions
 - [x] 6 · Cost function
-- [ ] 7 · Gradient descent in 1-D
+- [x] 7 · Gradient descent in 1-D
 - [ ] 8 · Finite-difference gradients
 - [ ] 9 · Mini-batches
 - [ ] 10 · Derivatives by hand

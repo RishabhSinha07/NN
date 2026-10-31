@@ -35,6 +35,7 @@ from nn.data import (  # noqa: E402
     LINEAR_INTERCEPT,
     class_balance,
     make_fruit_data,
+    one_hot,
 )
 from nn.network import Layer, Network  # noqa: E402
 
@@ -341,8 +342,7 @@ class Viewer:
         self.kind = kind
         self.prev, self.frozen = None, 0
         self.X, self.y = make_fruit_data(N_POINTS, kind, seed=DATA_SEED)
-        # one-hot targets: label 0 -> [1, 0], label 1 -> [0, 1]
-        self.expected = np.eye(len(CLASS_NAMES))[self.y]
+        self.expected = one_hot(self.y, len(CLASS_NAMES))
         self.baseline = class_balance(self.y)["baseline"]
         for label, name in enumerate(CLASS_NAMES):
             self.scatters[name].set_offsets(self.X[self.y == label])
@@ -407,9 +407,7 @@ class Viewer:
 
         predicted = np.array([self.net.classify(x) for x in self.X])
         acc = float(np.mean(predicted == self.y))
-        # dataset cost = mean of the per-datapoint cost, against one-hot targets
-        cost = float(np.mean([self.net.cost(x, t)
-                              for x, t in zip(self.X, self.expected)]))
+        cost = self.net.average_cost(self.X, self.expected)
         shape = " → ".join(str(n) for n in self.shape)
         self.readout.set_text(
             f"{shape}   {len(self.slots)} parameters        "

@@ -33,3 +33,9 @@ class Network:
     def cost(self, inputs: np.ndarray, outputs: np.ndarray) -> float:
         predicted = self.calculate_output(inputs)
         return float(np.mean((predicted - outputs) ** 2))
+
+    def average_cost(self, list_of_inputs: list[np.ndarray], list_of_outputs: list[np.ndarray]) -> float:
+        total_cost = 0.0
+        for inputs, outputs in zip(list_of_inputs, list_of_outputs):
+            total_cost += self.cost(inputs, outputs)
+        return total_cost / len(list_of_inputs)

@@ -360,7 +360,7 @@ Pure drop-in: identical data shape, change only the loader. Free proof that noth
 ## Progress
 
 - [x] 1 · Fake fruit data
-- [ ] 2 · Weights only
+- [x] 2 · Weights only
 - [ ] 3 · Biases
 - [ ] 4 · Hidden layers
 - [ ] 5 · Activation functions

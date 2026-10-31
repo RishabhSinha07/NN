@@ -144,6 +144,8 @@ class Viewer:
         self.headings = []
         self.note = None
         self.kind = "linear"
+        self.prev = None          # (cost, accuracy) from the last redraw
+        self.frozen = 0           # consecutive nudges with accuracy unmoved
 
         self._build_plot()
         self._build_controls()
@@ -176,6 +178,9 @@ class Viewer:
         self.readout = self.ax.set_title("", loc="left", fontsize=10)
         self.collapse_text = self.fig.text(
             0.05, 0.155, "", fontsize=9, color=p["muted"], family="monospace",
+        )
+        self.delta_text = self.fig.text(
+            0.05, 0.125, "", fontsize=9, color=p["muted"], family="monospace",
         )
 
         handles = [
@@ -295,6 +300,7 @@ class Viewer:
         self.slots = param_slots(self.net)
         self._clear_sliders()
         self._build_sliders()
+        self.prev, self.frozen = None, 0
         self.shape_box.set_val(" ".join(str(n) for n in self.shape))
         self.push_params()
         self.refresh()
@@ -333,7 +339,10 @@ class Viewer:
 
     def load_data(self, kind):
         self.kind = kind
+        self.prev, self.frozen = None, 0
         self.X, self.y = make_fruit_data(N_POINTS, kind, seed=DATA_SEED)
+        # one-hot targets: label 0 -> [1, 0], label 1 -> [0, 1]
+        self.expected = np.eye(len(CLASS_NAMES))[self.y]
         self.baseline = class_balance(self.y)["baseline"]
         for label, name in enumerate(CLASS_NAMES):
             self.scatters[name].set_offsets(self.X[self.y == label])
@@ -358,6 +367,30 @@ class Viewer:
         self.push_params()
         self.refresh()
 
+    def _show_deltas(self, cost, acc):
+        """Side-by-side change in cost and in accuracy since the last redraw.
+
+        This is step 6's whole argument: accuracy only moves when a fruit
+        crosses the boundary, so most nudges leave it frozen and a learning
+        algorithm reading it would get no feedback. Cost moves every time.
+        """
+        if self.prev is None:
+            self.delta_text.set_text("")
+            self.prev = (cost, acc)
+            return
+        d_cost, d_acc = cost - self.prev[0], acc - self.prev[1]
+        self.frozen = 0 if d_acc else self.frozen + 1
+        if d_acc:
+            acc_note = f"accuracy moved {d_acc:+.1%}"
+        elif self.frozen > 1:
+            acc_note = f"accuracy frozen for {self.frozen} nudges"
+        else:
+            acc_note = "accuracy unchanged"
+        self.delta_text.set_text(
+            f"last nudge:  cost {d_cost:+.6f}      {acc_note}"
+        )
+        self.prev = (cost, acc)
+
     def refresh(self):
         if not hasattr(self, "X"):
             return
@@ -374,11 +407,16 @@ class Viewer:
 
         predicted = np.array([self.net.classify(x) for x in self.X])
         acc = float(np.mean(predicted == self.y))
+        # dataset cost = mean of the per-datapoint cost, against one-hot targets
+        cost = float(np.mean([self.net.cost(x, t)
+                              for x, t in zip(self.X, self.expected)]))
         shape = " → ".join(str(n) for n in self.shape)
         self.readout.set_text(
             f"{shape}   {len(self.slots)} parameters        "
-            f"accuracy {acc:5.1%}     baseline {self.baseline:.0%}"
+            f"cost {cost:.5f}       accuracy {acc:5.1%}     "
+            f"baseline {self.baseline:.0%}"
         )
+        self._show_deltas(cost, acc)
 
         line = collapsed_line(self.net)
         self.collapse_text.set_text(

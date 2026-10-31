@@ -29,3 +29,7 @@ class Network:
     def classify(self, inputs: np.ndarray) -> int:
         output = self.calculate_output(inputs)
         return np.argmax(output)
+
+    def cost(self, inputs: np.ndarray, outputs: np.ndarray) -> float:
+        predicted = self.calculate_output(inputs)
+        return float(np.mean((predicted - outputs) ** 2))
